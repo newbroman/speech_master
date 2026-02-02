@@ -108,8 +108,15 @@
         .install-btn { background: white; color: var(--pol-red); border: none; padding: 8px 16px; border-radius: 15px; font-weight: 700; cursor: pointer; font-size: 0.7rem; }
         .close-install { background: none; border: none; color: white; font-size: 1.2rem; cursor: pointer; padding: 0 5px; opacity: 0.8; }
 
+
+        /* Speech Mode */
+        .speech-prompt { background: var(--card); padding: 15px; border-radius: 12px; margin: 10px auto; max-width: 400px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .speech-prompt-label { font-size: 0.65rem; opacity: 0.6; margin-bottom: 5px; text-transform: uppercase; }
+        .speech-prompt-text { font-size: 1.1rem; font-weight: 800; color: var(--text); margin-bottom: 10px; }
+        .speech-heard { font-size: 0.7rem; color: var(--accent-blue); font-weight: 700; min-height: 20px; margin-top: 5px; }
         .tile.mic-listening { animation: pulse-mic 1s infinite; }
         @keyframes pulse-mic { 0%, 100% { box-shadow: 0 2px 8px rgba(220,20,60,0.3); } 50% { box-shadow: 0 4px 16px rgba(220,20,60,0.7); } }
+        .mic-icon { font-size: 1.2rem; }
     </style>
 </head>
 <body>
@@ -170,7 +177,7 @@
         <span>🎤 SPEECH</span>
         <span id="speech-count" class="counter-label"></span>
     </div>
-    <div id="tab-mastered"<div id="tab-mastered" class="tab" onclick="switchMode('mastered')">
+    <div id="tab-mastered" class="tab" onclick="switchMode('mastered')">
         <span>BANK</span>
     </div>
     <div id="tab-test" class="tab" onclick="switchMode('test')">
@@ -601,78 +608,21 @@
     }
 
 
-    // Modify tile behavior for speech mode
-    const _origUpdateMap = updateMap;
-    updateMap = function() {
-        _origUpdateMap();
-        
-        if (isSpeechMode) {
-            // Change all speaker icons to microphones
-            document.querySelectorAll('.spk').forEach(spk => {
-                spk.innerText = '🎙️';
-            });
-        }
-    };
-
-    // Override tile click for speech mode
-    document.addEventListener('click', function(e) {
-        const tile = e.target.closest('.tile');
-        if (!tile || !isSpeechMode) return;
-        
-        // Prevent default tile click in speech mode
-        e.stopPropagation();
-        
-        // Get the phrase from the tile
-        const plText = tile.querySelector('.pl')?.innerText;
-        if (!plText) return;
-        
-        // Find the phrase object
-        const phrase = activePool.find(p => getGenderText(p) === plText);
-        if (!phrase) return;
-        
-        currentTarget = phrase;
-        activeSpeechTile = tile;
-        
-        // Start speech recognition
-        if (!recognition) {
-            recognition = initSpeechRecognition();
-            if (!recognition) {
-                alert('Speech recognition requires Chrome, Edge, or Safari');
-                return;
-            }
-        }
-        
-        if (isListening) {
-            recognition.stop();
-            return;
-        }
-        
-        tile.classList.add('mic-listening');
-        isListening = true;
-        recognition.start();
-    }, true); // Use capture phase to intercept before other handlers
-
-
-    const _origSwitchMode = switchMode;
-    switchMode = function(m) {
-        isSpeechMode = (m === 'speech');
-        _origSwitchMode(m);
-    };
-
 
     // ============================================================================
     // SPEECH RECOGNITION MODE
     // ============================================================================
     
     let isSpeechMode = false;
-    let recognition = null;
+    let speechRecognition = null;
     let isListening = false;
-    let activeSpeechTile = null;
+    let currentSpeechTile = null;
+    let speechPromptPhrase = null;
 
-    function initSpeechRecognition() {
+    function initSpeech() {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SpeechRecognition) {
-            console.log('Speech recognition not supported');
+            alert('Speech recognition requires Chrome, Edge, or Safari');
             return null;
         }
         
@@ -683,234 +633,162 @@
         
         recog.onresult = (event) => {
             const transcript = event.results[0][0].transcript;
-            handleSpeechResult(transcript);
+            handleSpeechAnswer(transcript);
         };
         
         recog.onerror = (event) => {
-            if (activeSpeechTile) {
-                activeSpeechTile.classList.remove('mic-listening');
-            }
+            console.log('Speech error:', event.error);
+            document.getElementById('speech-heard').innerText = '❌ Nie słyszę - spróbuj ponownie';
+            if (currentSpeechTile) currentSpeechTile.classList.remove('mic-listening');
             isListening = false;
-            activeSpeechTile = null;
         };
         
         recog.onend = () => {
             isListening = false;
-            if (activeSpeechTile) {
-                activeSpeechTile.classList.remove('mic-listening');
-            }
+            if (currentSpeechTile) currentSpeechTile.classList.remove('mic-listening');
         };
         
         return recog;
     }
 
-    function handleSpeechResult(transcript) {
-        if (!currentTarget || !activeSpeechTile) return;
+    function handleSpeechAnswer(transcript) {
+        const heardEl = document.getElementById('speech-heard');
+        heardEl.innerText = `You said: "${transcript}"`;
+        
+        if (!speechPromptPhrase) return;
         
         const spoken = transcript.toLowerCase().trim();
-        const correct = getGenderText(currentTarget, true).toLowerCase().trim();
+        const correct = getGenderText(speechPromptPhrase, true).toLowerCase().trim();
         
         // Check all valid variants
         const variants = [correct];
-        if (currentTarget.gender === 'both' && currentTarget.variants) {
-            variants.push(currentTarget.variants.m.toLowerCase().trim());
-            variants.push(currentTarget.variants.f.toLowerCase().trim());
+        if (speechPromptPhrase.gender === 'both' && speechPromptPhrase.variants) {
+            variants.push(speechPromptPhrase.variants.m.toLowerCase().trim());
+            variants.push(speechPromptPhrase.variants.f.toLowerCase().trim());
         }
         
-        // Calculate best similarity
-        let maxSimilarity = 0;
-        variants.forEach(variant => {
-            const sim = calculateSimilarity(spoken, variant);
-            if (sim > maxSimilarity) maxSimilarity = sim;
+        // Check if correct (exact match or very close)
+        const isCorrect = variants.some(v => {
+            if (spoken === v) return true;
+            // Allow small typos
+            const longer = spoken.length > v.length ? spoken : v;
+            const shorter = spoken.length > v.length ? v : spoken;
+            const diff = Math.abs(spoken.length - v.length);
+            return diff <= 2 && longer.includes(shorter.substring(0, Math.min(4, shorter.length)));
         });
         
-        const isCorrect = maxSimilarity > 0.65;
-        
-        activeSpeechTile.classList.remove('mic-listening');
-        
         if (isCorrect) {
+            // Correct!
             correctStreak++;
             playNote(440 + (correctStreak * 40), 0.2);
-            activeSpeechTile.style.background = '#27ae60';
-            activeSpeechTile.querySelector('.en').innerText = '✅ Dobrze!';
+            heardEl.innerHTML = `✅ <strong>Dobrze!</strong> "${transcript}"`;
+            heardEl.style.color = '#27ae60';
             
             if (!isMarathon) {
-                stats[currentTarget.pl] = (stats[currentTarget.pl] || 0) + 1;
+                stats[speechPromptPhrase.pl] = (stats[speechPromptPhrase.pl] || 0) + 1;
                 saveStats();
             }
             
             setTimeout(() => {
-                const idx = activePool.findIndex(ap => ap.pl === currentTarget.pl);
+                const idx = activePool.findIndex(ap => ap.pl === speechPromptPhrase.pl);
                 if (isMarathon) {
                     if (marathonQueue.length > 0) activePool[idx] = marathonQueue.shift();
                     else activePool.splice(idx, 1);
                 } else {
-                    if (stats[currentTarget.pl] >= THRESHOLD) {
+                    if (stats[speechPromptPhrase.pl] >= THRESHOLD) {
                         const next = phrasesData.find(p => (stats[p.pl] || 0) < THRESHOLD && !activePool.includes(p));
                         if (next) activePool[idx] = next; else activePool.splice(idx, 1);
                     }
                 }
+                
                 if (activePool.length === 0) { 
                     playVictory(); 
                     document.getElementById('overlay').style.display='flex'; 
-                } else { 
-                    updateMap(); 
-                    startNewRound(); 
-                    updateTabCounters(); 
+                } else {
+                    showSpeechPrompt();
+                    updateTabCounters();
                 }
             }, 1500);
         } else {
+            // Wrong - let them try again
             correctStreak = 0;
-            activeSpeechTile.style.background = 'var(--wrong-blue)';
-            const enEl = activeSpeechTile.querySelector('.en');
-            enEl.style.fontSize = '0.6rem';
-            enEl.innerHTML = `You said: "${transcript}"<br><strong>${getGenderText(currentTarget)}</strong>`;
-            
-            speak(currentTarget.pl);
-            
-            setTimeout(() => {
-                enEl.style.fontSize = '';
-                enEl.innerText = currentTarget.en;
-                activeSpeechTile.style.background = '';
-                startNewRound();
-            }, 3500);
+            heardEl.innerHTML = `❌ You said: "${transcript}"<br><small>Try again or tap Polish phrase to hear it</small>`;
+            heardEl.style.color = 'var(--wrong-blue)';
+        }
+    }
+
+    function showSpeechPrompt() {
+        if (activePool.length === 0) {
+            document.getElementById('mastery-map').innerHTML = '<div class="mastered-card"><h2>Level Mastered! 🏅</h2></div>';
+            return;
         }
         
-        activeSpeechTile = null;
-        isListening = false;
-    }
-
-    function calculateSimilarity(s1, s2) {
-        const longer = s1.length > s2.length ? s1 : s2;
-        const shorter = s1.length > s2.length ? s2 : s1;
-        if (longer.length === 0) return 1.0;
-        const editDist = levenshteinDistance(longer, shorter);
-        return (longer.length - editDist) / longer.length;
-    }
-
-    function levenshteinDistance(s1, s2) {
-        const costs = [];
-        for (let i = 0; i <= s1.length; i++) {
-            let lastValue = i;
-            for (let j = 0; j <= s2.length; j++) {
-                if (i === 0) costs[j] = j;
-                else if (j > 0) {
-                    let newValue = costs[j - 1];
-                    if (s1.charAt(i - 1) !== s2.charAt(j - 1))
-                        newValue = Math.min(Math.min(newValue, lastValue), costs[j]) + 1;
-                    costs[j - 1] = lastValue;
-                    lastValue = newValue;
-                }
-            }
-            if (i > 0) costs[s2.length] = lastValue;
-        }
-        return costs[s2.length];
-    }
-
-
-
-    // Check if speech mode is available for current level
-    function isSpeechModeAvailable() {
-        if (currentLevel === 0) return false; // Alphabet level - no speech
+        // Pick random phrase
+        speechPromptPhrase = activePool[Math.floor(Math.random() * activePool.length)];
         
-        // Check if all phrases in current level are mastered
-        const allMastered = phrasesData.every(p => (stats[p.pl] || 0) >= THRESHOLD);
-        return allMastered;
+        // Show English prompt at top
+        const area = document.getElementById('mastery-map');
+        area.innerHTML = `
+            <div class="speech-prompt">
+                <div class="speech-prompt-label">Say in Polish:</div>
+                <div class="speech-prompt-text">${speechPromptPhrase.en}</div>
+                <button class="mic-btn" onclick="startSpeechRecognition()" style="background: var(--pol-red); border: none; border-radius: 50%; width: 60px; height: 60px; font-size: 1.8rem; color: white; cursor: pointer; margin: 10px auto; display: block; box-shadow: 0 2px 8px rgba(220,20,60,0.3);">🎙️</button>
+                <div id="speech-heard" class="speech-heard"></div>
+            </div>
+        `;
+        
+        // Show grid with Polish phrases (for reference and to tap to hear)
+        updateMap();
     }
 
-    // Override switchMode to check speech availability
-    const _originalSwitchMode = switchMode;
+    function startSpeechRecognition() {
+        if (!speechRecognition) {
+            speechRecognition = initSpeech();
+            if (!speechRecognition) return;
+        }
+        
+        if (isListening) {
+            speechRecognition.stop();
+            return;
+        }
+        
+        document.getElementById('speech-heard').innerText = '🎤 Listening...';
+        document.getElementById('speech-heard').style.color = 'var(--text)';
+        
+        isListening = true;
+        speechRecognition.start();
+    }
+
+    // Modify switchMode to handle speech
+    const __originalSwitchMode = switchMode;
     switchMode = function(m) {
-        // If trying to switch to speech mode, check if available
-        if (m === 'speech') {
-            if (!isSpeechModeAvailable()) {
-                // Show message that speech mode is locked
-                const area = document.getElementById('mastery-map');
-                area.innerHTML = `
+        isSpeechMode = (m === 'speech');
+        
+        if (isSpeechMode) {
+            // Check if unlocked
+            const allMastered = phrasesData.every(p => (stats[p.pl] || 0) >= THRESHOLD);
+            
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.getElementById('tab-speech').classList.add('active');
+            
+            if (!allMastered && currentLevel !== 0) {
+                document.getElementById('mastery-map').innerHTML = `
                     <div class="mastered-card">
                         <h2>🔒 Speech Mode Locked</h2>
                         <p>Complete this level first to unlock speech practice!</p>
-                        <p style="font-size: 0.75rem; opacity: 0.7; margin-top: 15px;">
-                            Master all phrases in LEARNING mode, then return here to practice pronunciation.
-                        </p>
                     </div>
                 `;
-                
-                // Switch UI to show locked state
-                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-                document.getElementById('tab-speech').classList.add('active');
                 document.getElementById('quiz-ui').style.display = 'none';
-                
-                return; // Don't proceed with normal switchMode
-            }
-        }
-        
-        // Proceed with normal mode switch
-        isSpeechMode = (m === 'speech');
-        _originalSwitchMode(m);
-    };
-    
-    // Update tab counter to show lock icon for speech if not available
-    const _originalUpdateTabCounters = updateTabCounters;
-    updateTabCounters = function() {
-        _originalUpdateTabCounters();
-        
-        const speechTab = document.getElementById('tab-speech');
-        const speechCount = document.getElementById('speech-count');
-        
-        if (speechTab && speechCount) {
-            if (isSpeechModeAvailable()) {
-                const remaining = phrasesData.filter(p => (stats[p.pl] || 0) < THRESHOLD).length;
-                speechCount.innerText = remaining > 0 ? `Rem: ${remaining}` : "✅";
-                speechTab.style.opacity = '1';
             } else {
-                speechCount.innerText = "🔒";
-                speechTab.style.opacity = '0.5';
+                document.getElementById('quiz-ui').style.display = 'flex';
+                showSpeechPrompt();
             }
-        }
-    };
-
-
-
-    // Swap speaker icons to microphones in speech mode
-    function updateIconsForMode() {
-        if (isSpeechMode) {
-            document.querySelectorAll('.spk').forEach(spk => {
-                spk.innerText = '🎙️';
-                spk.setAttribute('data-mode', 'speech');
-            });
+            
+            updateTabCounters();
         } else {
-            document.querySelectorAll('.spk').forEach(spk => {
-                if (spk.getAttribute('data-mode') === 'speech') {
-                    spk.innerText = '🔊';
-                    spk.removeAttribute('data-mode');
-                }
-            });
+            isSpeechMode = false;
+            __originalSwitchMode(m);
         }
-    }
-
-    // Hook into updateMap to swap icons after tiles are created
-    const __origUpdateMap = updateMap;
-    updateMap = function() {
-        __origUpdateMap();
-        updateIconsForMode();
-    };
-
-    // Also hook into startNewRound to ensure icons stay correct
-    const __origStartNewRound = startNewRound;
-    startNewRound = function() {
-        __origStartNewRound();
-        updateIconsForMode();
-    };
-
-    // Prevent auto-speak in speech mode
-    const __origSpeak = speak;
-    speak = function(text) {
-        if (isSpeechMode) {
-            // In speech mode, only speak when showing correction (not on tile generation)
-            return;
-        }
-        __origSpeak(text);
     };
 
 </script>
