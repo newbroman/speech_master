@@ -807,6 +807,112 @@
         return costs[s2.length];
     }
 
+
+
+    // Check if speech mode is available for current level
+    function isSpeechModeAvailable() {
+        if (currentLevel === 0) return false; // Alphabet level - no speech
+        
+        // Check if all phrases in current level are mastered
+        const allMastered = phrasesData.every(p => (stats[p.pl] || 0) >= THRESHOLD);
+        return allMastered;
+    }
+
+    // Override switchMode to check speech availability
+    const _originalSwitchMode = switchMode;
+    switchMode = function(m) {
+        // If trying to switch to speech mode, check if available
+        if (m === 'speech') {
+            if (!isSpeechModeAvailable()) {
+                // Show message that speech mode is locked
+                const area = document.getElementById('mastery-map');
+                area.innerHTML = `
+                    <div class="mastered-card">
+                        <h2>🔒 Speech Mode Locked</h2>
+                        <p>Complete this level first to unlock speech practice!</p>
+                        <p style="font-size: 0.75rem; opacity: 0.7; margin-top: 15px;">
+                            Master all phrases in LEARNING mode, then return here to practice pronunciation.
+                        </p>
+                    </div>
+                `;
+                
+                // Switch UI to show locked state
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                document.getElementById('tab-speech').classList.add('active');
+                document.getElementById('quiz-ui').style.display = 'none';
+                
+                return; // Don't proceed with normal switchMode
+            }
+        }
+        
+        // Proceed with normal mode switch
+        isSpeechMode = (m === 'speech');
+        _originalSwitchMode(m);
+    };
+    
+    // Update tab counter to show lock icon for speech if not available
+    const _originalUpdateTabCounters = updateTabCounters;
+    updateTabCounters = function() {
+        _originalUpdateTabCounters();
+        
+        const speechTab = document.getElementById('tab-speech');
+        const speechCount = document.getElementById('speech-count');
+        
+        if (speechTab && speechCount) {
+            if (isSpeechModeAvailable()) {
+                const remaining = phrasesData.filter(p => (stats[p.pl] || 0) < THRESHOLD).length;
+                speechCount.innerText = remaining > 0 ? `Rem: ${remaining}` : "✅";
+                speechTab.style.opacity = '1';
+            } else {
+                speechCount.innerText = "🔒";
+                speechTab.style.opacity = '0.5';
+            }
+        }
+    };
+
+
+
+    // Swap speaker icons to microphones in speech mode
+    function updateIconsForMode() {
+        if (isSpeechMode) {
+            document.querySelectorAll('.spk').forEach(spk => {
+                spk.innerText = '🎙️';
+                spk.setAttribute('data-mode', 'speech');
+            });
+        } else {
+            document.querySelectorAll('.spk').forEach(spk => {
+                if (spk.getAttribute('data-mode') === 'speech') {
+                    spk.innerText = '🔊';
+                    spk.removeAttribute('data-mode');
+                }
+            });
+        }
+    }
+
+    // Hook into updateMap to swap icons after tiles are created
+    const __origUpdateMap = updateMap;
+    updateMap = function() {
+        __origUpdateMap();
+        updateIconsForMode();
+    };
+
+    // Also hook into startNewRound to ensure icons stay correct
+    const __origStartNewRound = startNewRound;
+    startNewRound = function() {
+        __origStartNewRound();
+        updateIconsForMode();
+    };
+
+    // Prevent auto-speak in speech mode
+    const __origSpeak = speak;
+    speak = function(text) {
+        if (isSpeechMode) {
+            // In speech mode, only speak when showing correction (not on tile generation)
+            return;
+        }
+        __origSpeak(text);
+    };
+
 </script>
 </body>
 </html>
