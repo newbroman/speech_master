@@ -117,6 +117,7 @@
         .tile.mic-listening { animation: pulse-mic 1s infinite; }
         @keyframes pulse-mic { 0%, 100% { box-shadow: 0 2px 8px rgba(220,20,60,0.3); } 50% { box-shadow: 0 4px 16px rgba(220,20,60,0.7); } }
         .mic-icon { font-size: 1.2rem; }
+        .speech-banner { background: var(--accent-blue); color: white; padding: 12px; text-align: center; font-weight: 700; font-size: 0.85rem; }
     </style>
 </head>
 <body>
@@ -174,7 +175,7 @@
         <span id="learn-count" class="counter-label"></span>
     </div>
     <div id="tab-speech" class="tab" onclick="switchMode('speech')">
-        <span>🎤 SPEECH</span>
+        <span>SPEECH</span>
         <span id="speech-count" class="counter-label"></span>
     </div>
     <div id="tab-mastered" class="tab" onclick="switchMode('mastered')">
@@ -652,25 +653,26 @@
     }
 
     function handleSpeechAnswer(transcript) {
-        const heardEl = document.getElementById('speech-heard');
-        heardEl.innerText = `You said: "${transcript}"`;
+        const banner = document.getElementById('speech-banner');
         
-        if (!speechPromptPhrase) return;
+        if (!currentTarget) {
+            if (banner) banner.innerHTML = `❌ Error - please try again`;
+            return;
+        }
         
         const spoken = transcript.toLowerCase().trim();
-        const correct = getGenderText(speechPromptPhrase, true).toLowerCase().trim();
+        const correct = getGenderText(currentTarget, true).toLowerCase().trim();
         
         // Check all valid variants
         const variants = [correct];
-        if (speechPromptPhrase.gender === 'both' && speechPromptPhrase.variants) {
-            variants.push(speechPromptPhrase.variants.m.toLowerCase().trim());
-            variants.push(speechPromptPhrase.variants.f.toLowerCase().trim());
+        if (currentTarget.gender === 'both' && currentTarget.variants) {
+            variants.push(currentTarget.variants.m.toLowerCase().trim());
+            variants.push(currentTarget.variants.f.toLowerCase().trim());
         }
         
-        // Check if correct (exact match or very close)
+        // Check if correct (exact or very close)
         const isCorrect = variants.some(v => {
             if (spoken === v) return true;
-            // Allow small typos
             const longer = spoken.length > v.length ? spoken : v;
             const shorter = spoken.length > v.length ? v : spoken;
             const diff = Math.abs(spoken.length - v.length);
@@ -681,21 +683,31 @@
             // Correct!
             correctStreak++;
             playNote(440 + (correctStreak * 40), 0.2);
-            heardEl.innerHTML = `✅ <strong>Dobrze!</strong> "${transcript}"`;
-            heardEl.style.color = '#27ae60';
+            
+            if (banner) {
+                banner.innerHTML = `
+                    <div style="display: flex; align-items: center; justify-content: center; gap: 12px; flex-direction: column;">
+                        <div>✅ <strong>Dobrze!</strong></div>
+                        <div style="font-size: 0.75rem; opacity: 0.8;">You said: "${transcript}"</div>
+                    </div>
+                `;
+                banner.style.background = '#27ae60';
+            }
             
             if (!isMarathon) {
-                stats[speechPromptPhrase.pl] = (stats[speechPromptPhrase.pl] || 0) + 1;
+                stats[currentTarget.pl] = (stats[currentTarget.pl] || 0) + 1;
                 saveStats();
             }
             
             setTimeout(() => {
-                const idx = activePool.findIndex(ap => ap.pl === speechPromptPhrase.pl);
+                if (banner) banner.style.background = 'var(--accent-blue)';
+                
+                const idx = activePool.findIndex(ap => ap.pl === currentTarget.pl);
                 if (isMarathon) {
                     if (marathonQueue.length > 0) activePool[idx] = marathonQueue.shift();
                     else activePool.splice(idx, 1);
                 } else {
-                    if (stats[speechPromptPhrase.pl] >= THRESHOLD) {
+                    if (stats[currentTarget.pl] >= THRESHOLD) {
                         const next = phrasesData.find(p => (stats[p.pl] || 0) < THRESHOLD && !activePool.includes(p));
                         if (next) activePool[idx] = next; else activePool.splice(idx, 1);
                     }
@@ -705,41 +717,49 @@
                     playVictory(); 
                     document.getElementById('overlay').style.display='flex'; 
                 } else {
-                    showSpeechPrompt();
+                    updateMap();
+                    startNewRound();
                     updateTabCounters();
                 }
             }, 1500);
         } else {
-            // Wrong - let them try again
+            // Wrong - RESET TONE TO LOWEST, show what they said, let them try again
             correctStreak = 0;
-            heardEl.innerHTML = `❌ You said: "${transcript}"<br><small>Try again or tap Polish phrase to hear it</small>`;
-            heardEl.style.color = 'var(--wrong-blue)';
+            
+            if (banner) {
+                banner.innerHTML = `
+                    <div style="display: flex; align-items: center; justify-content: center; gap: 12px;">
+                        <span>SAY IN POLISH: <strong>${currentTarget.en}</strong></span>
+                        <button id="speech-mic-btn" onclick="startSpeechRecognition(event)" style="background: var(--pol-red); border: none; border-radius: 50%; width: 45px; height: 45px; font-size: 1.5rem; color: white; cursor: pointer; box-shadow: 0 2px 8px rgba(220,20,60,0.3);">🎙️</button>
+                    </div>
+                    <div style="font-size: 0.75rem; margin-top: 8px; color: white;">
+                        ❌ You said: "${transcript}" | Correct: <strong>${getGenderText(currentTarget)}</strong>
+                    </div>
+                `;
+                banner.style.background = 'var(--wrong-blue)';
+            }
+            
+            // Speak the correct answer
+            speak(currentTarget.pl);
+            
+            // Keep showing the error so they can try again
+            setTimeout(() => {
+                if (banner) {
+                    banner.innerHTML = `
+                        <div style="display: flex; align-items: center; justify-content: center; gap: 12px;">
+                            <span>SAY IN POLISH: <strong>${currentTarget.en}</strong></span>
+                            <button id="speech-mic-btn" onclick="startSpeechRecognition(event)" style="background: var(--pol-red); border: none; border-radius: 50%; width: 45px; height: 45px; font-size: 1.5rem; color: white; cursor: pointer; box-shadow: 0 2px 8px rgba(220,20,60,0.3);">🎙️</button>
+                        </div>
+                    `;
+                    banner.style.background = 'var(--accent-blue)';
+                }
+            }, 3000);
         }
+        
+        isListening = false;
     }
 
-    function showSpeechPrompt() {
-        if (activePool.length === 0) {
-            document.getElementById('mastery-map').innerHTML = '<div class="mastered-card"><h2>Level Mastered! 🏅</h2></div>';
-            return;
-        }
-        
-        // Pick random phrase
-        speechPromptPhrase = activePool[Math.floor(Math.random() * activePool.length)];
-        
-        // Show English prompt at top
-        const area = document.getElementById('mastery-map');
-        area.innerHTML = `
-            <div class="speech-prompt">
-                <div class="speech-prompt-label">Say in Polish:</div>
-                <div class="speech-prompt-text">${speechPromptPhrase.en}</div>
-                <button class="mic-btn" onclick="startSpeechRecognition()" style="background: var(--pol-red); border: none; border-radius: 50%; width: 60px; height: 60px; font-size: 1.8rem; color: white; cursor: pointer; margin: 10px auto; display: block; box-shadow: 0 2px 8px rgba(220,20,60,0.3);">🎙️</button>
-                <div id="speech-heard" class="speech-heard"></div>
-            </div>
-        `;
-        
-        // Show grid with Polish phrases (for reference and to tap to hear)
-        updateMap();
-    }
+    
 
     function startSpeechRecognition() {
         if (!speechRecognition) {
@@ -780,8 +800,16 @@
                 `;
                 document.getElementById('quiz-ui').style.display = 'none';
             } else {
+                // Use regular 12-tile grid
                 document.getElementById('quiz-ui').style.display = 'flex';
-                showSpeechPrompt();
+                updateMap();
+                startNewRound();
+                
+                
+                // Change speaker icons to microphones after grid is created
+                setTimeout(() => {
+                    
+                }, 50);
             }
             
             updateTabCounters();
@@ -790,6 +818,97 @@
             __originalSwitchMode(m);
         }
     };
+
+
+
+    // Override startNewRound to show English prompt in speech mode
+    const ___origStartNewRound = startNewRound;
+    startNewRound = function() {
+        ___origStartNewRound();
+        
+        if (isSpeechMode && currentTarget) {
+            // Add English prompt banner
+            const quizUI = document.getElementById('quiz-ui');
+            let banner = document.getElementById('speech-banner');
+            
+            if (!banner) {
+                banner = document.createElement('div');
+                banner.id = 'speech-banner';
+                banner.className = 'speech-banner';
+                quizUI.insertBefore(banner, quizUI.firstChild);
+            }
+            
+            banner.innerHTML = `
+                <div style="display: flex; align-items: center; justify-content: center; gap: 12px;">
+                    <span>SAY IN POLISH: <strong>${currentTarget.en}</strong></span>
+                    <button id="speech-mic-btn" onclick="startSpeechRecognition(event)" style="background: var(--pol-red); border: none; border-radius: 50%; width: 45px; height: 45px; font-size: 1.5rem; color: white; cursor: pointer; box-shadow: 0 2px 8px rgba(220,20,60,0.3); transition: all 0.2s;">🎙️</button>
+                </div>
+            `;
+            
+            
+            
+            // Change speakers to microphones
+            setTimeout(() => {
+                
+            }, 50);
+        } else {
+            // Remove banner in other modes
+            const banner = document.getElementById('speech-banner');
+            if (banner) banner.remove();
+        }
+    };
+
+    // Modify tile click for speech mode - start recognition instead of selecting
+    document.addEventListener('click', function(e) {
+        const tile = e.target.closest('.tile');
+        if (!tile || !isSpeechMode) return;
+        
+        
+
+
+
+    
+
+
+
+    
+
+
+
+    function startSpeechRecognition(e) {
+        if (e) e.stopPropagation();
+        
+        if (!currentTarget) return;
+        
+        if (!speechRecognition) {
+            speechRecognition = initSpeech();
+            if (!speechRecognition) {
+                alert('Speech recognition requires Chrome, Edge, or Safari');
+                return;
+            }
+        }
+        
+        const banner = document.getElementById('speech-banner');
+        const micBtn = document.getElementById('speech-mic-btn');
+        
+        if (banner) {
+            banner.innerHTML = `
+                <div style="display: flex; align-items: center; justify-content: center; gap: 12px;">
+                    <span>SAY IN POLISH: <strong>${currentTarget.en}</strong></span>
+                    <button id="speech-mic-btn" style="background: #e74c3c; border: none; border-radius: 50%; width: 45px; height: 45px; font-size: 1.5rem; color: white; cursor: pointer; box-shadow: 0 4px 16px rgba(220,20,60,0.7); animation: pulse-mic 1s infinite;">🎤</button>
+                </div>
+            `;
+            
+            // Add listening indicator
+            const heard = document.createElement('div');
+            heard.style.cssText = 'font-size: 0.7rem; margin-top: 8px; opacity: 0.7;';
+            heard.innerText = '🎤 Listening...';
+            banner.appendChild(heard);
+        }
+        
+        isListening = true;
+        speechRecognition.start();
+    }
 
 </script>
 </body>
