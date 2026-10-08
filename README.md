@@ -1,5 +1,7 @@
 # Polish Master v2.0 - Restructured Edition
 
+> **Archived.** This is an earlier version, kept for reference. The current app is **Polish Phrase Master**: [repo](https://github.com/newbroman/Polish_survival_phrases) · [live app](https://newbroman.github.io/Polish_survival_phrases/).
+
 **Total:** 31 levels, 2,093 phrases
 **Features:** Gender toggle, optimal 70-phrase levels, comprehensive coverage
 
